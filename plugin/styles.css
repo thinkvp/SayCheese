@@ -199,6 +199,10 @@ html, body {
   border: 1px solid rgba(245, 184, 61, 0.4);
   color: var(--accent);
 }
+.banner .btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: bold; }
+.banner .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.banner .link.quiet { color: rgba(245, 184, 61, 0.7); }
+.banner .link.quiet:hover { color: var(--accent-hover); }
 
 #options {
   display: flex;
