@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // build.js -- package a release as dist/SayCheese-<version>.ccx, which
 // Creative Cloud installs on double-click. It carries everything: the panel,
-// the analysis addon (win/x64/saycheese.uxpaddon), MediaPipe's library and the
-// face model, so there is nothing else to install.
+// the analysis addon for each platform (win/x64 and mac/arm64), MediaPipe's
+// library for each, and the face model, so there is nothing else to install.
+// UXP loads the addon from the folder for the running platform.
 //
 // Run `npm run deps` first to fetch the MediaPipe library and the model.
 // Zero npm dependencies; the zip writer is plain Node so it runs anywhere.
@@ -15,15 +16,20 @@ const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
 const version = JSON.parse(fs.readFileSync(path.join(ROOT, "plugin", "manifest.json"), "utf8")).version;
 
-const PLUGIN_FILES = ["manifest.json", "index.html", "main.js", "styles.css", "icons", "win", "models"];
-const REQUIRED = ["win/x64/saycheese.uxpaddon", "win/x64/libmediapipe.dll", "models/face_landmarker.task"];
+const PLUGIN_FILES = ["manifest.json", "index.html", "main.js", "styles.css", "icons", "win", "mac", "models"];
+const REQUIRED = [
+  "win/x64/saycheese.uxpaddon", "win/x64/libmediapipe.dll",
+  "mac/arm64/saycheese.uxpaddon", "mac/arm64/libmediapipe.dylib",
+  "models/face_landmarker.task",
+];
 const EXECUTABLE = new Set();
 
 /** Files under `dir` for each name (folders expanded), as [zip path, absolute path]. */
 function collect(dir, names, prefix = "") {
   const out = [];
   for (const name of names) {
-    if (name.endsWith(".old")) continue;  // addon copies moved aside by native/build-addon-win.bat
+    // Addon copies moved aside by native/build-addon-win.bat, half-written files, Finder litter.
+    if (name.endsWith(".old") || name.endsWith(".new") || name === ".DS_Store") continue;
     const abs = path.join(dir, name);
     if (fs.statSync(abs).isDirectory()) {
       out.push(...collect(abs, fs.readdirSync(abs).sort(), `${prefix}${name}/`));
@@ -97,7 +103,7 @@ function writeZip(out, entries) {
 
 const missing = REQUIRED.filter((f) => !fs.existsSync(path.join(ROOT, "plugin", f)));
 if (missing.length) {
-  console.error(`build: missing plugin/${missing.join(", plugin/")}. Run npm run deps (and build the addon from native/).`);
+  console.error(`build: missing plugin/${missing.join(", plugin/")}. Run npm run deps, and build the addon from native/ (the macOS one comes from CI, or native/build-addon-mac.sh on a Mac).`);
   process.exit(1);
 }
 fs.mkdirSync(DIST, { recursive: true });

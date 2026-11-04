@@ -1,9 +1,10 @@
 name: Release
 
-# Push a tag like v0.2.0 to build the .ccx and publish it as a GitHub Release.
-# Bump the version first with `npm run version:set -- 0.2.0`. The .ccx bundles
-# the committed Windows addon plus MediaPipe and the face model, which
-# `npm run deps` fetches and checks against pinned hashes.
+# Push a tag like v0.3.0 to build the .ccx and publish it as a GitHub Release.
+# Bump the version first with `npm run version:set -- 0.3.0`. One .ccx carries
+# both platforms: the committed Windows addon, the macOS addon built by the
+# first job, and MediaPipe for each plus the face model, which `npm run deps`
+# fetches and checks against pinned hashes.
 # No signing step: independent (non-Marketplace) .ccx distribution doesn't need
 # the Adobe Developer Distribution portal.
 on:
@@ -14,7 +15,48 @@ permissions:
   contents: write
 
 jobs:
+  build-addon-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Cache FFmpeg build
+        id: cache-ffmpeg
+        uses: actions/cache@v6
+        with:
+          path: native/build/ffmpeg-out
+          key: ffmpeg-mac-arm64-${{ hashFiles('native/build-ffmpeg-mac.sh') }}
+
+      - name: Build FFmpeg (static, video only)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: bash native/build-ffmpeg-mac.sh
+
+      - name: Build macOS addon
+        run: |
+          npm run deps
+          bash native/build-addon-mac.sh
+          codesign --verify --verbose plugin/mac/arm64/saycheese.uxpaddon
+          lipo -archs plugin/mac/arm64/saycheese.uxpaddon | grep -qx arm64
+
+      - name: Smoke test
+        run: |
+          sips -s format jpeg -c 186 186 --cropOffset 276 14 "docs/screenshots/SayCheese UI.png" --out "$RUNNER_TEMP/face.jpg"
+          mkdir -p "$RUNNER_TEMP/thumbs"
+          native/build/out/saycheese-cli --thumbs "$RUNNER_TEMP/face.jpg" "$RUNNER_TEMP/thumbs" t | tee "$RUNNER_TEMP/thumbs.json"
+          grep -q '"face":"t_face.jpg"' "$RUNNER_TEMP/thumbs.json" || { echo "no face found"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-addon
+          path: plugin/mac/arm64/saycheese.uxpaddon
+          if-no-files-found: error
+
   release:
+    needs: build-addon-mac
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,12 +74,28 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match plugin/manifest.json version ($file)"; exit 1
           fi
 
+      - name: Download macOS addon
+        uses: actions/download-artifact@v8
+        with:
+          name: mac-addon
+          path: plugin/mac/arm64
+
       - name: Check and build
         run: |
           npm run lint
           python3 -m py_compile engine/analyzer.py engine/server.py
           npm run deps
           npm run build
+
+      - name: Check both platforms are in the .ccx
+        run: |
+          unzip -l dist/*.ccx | tee "$RUNNER_TEMP/ccx.txt"
+          for f in win/x64/saycheese.uxpaddon win/x64/libmediapipe.dll \
+                   mac/arm64/saycheese.uxpaddon mac/arm64/libmediapipe.dylib \
+                   models/face_landmarker.task manifest.json; do
+            grep -q " $f\$" "$RUNNER_TEMP/ccx.txt" || { echo "missing from .ccx: $f"; exit 1; }
+          done
+          echo "both platforms present"
 
       - name: Publish GitHub Release
         env:
