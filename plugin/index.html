@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Plain divs throughout: UXP doesn't lay out header/main/footer/label like a
+       browser, and draws native <button>s at a fixed size. -->
+  <div id="app">
+    <div id="top">
+      <div class="row head">
+        <img class="logo" src="icons/plugin@2x.png" width="20" height="20">
+        <span class="brand">SayCheese</span>
+        <div class="spacer"></div>
+        <div id="engine" class="status"><div class="dot"></div><span id="engineText">Connecting…</span></div>
+        <div id="startEngine" class="btn small hidden">Start engine</div>
+      </div>
+
+      <div id="update" class="banner hidden">
+        <span id="updateText"></span>
+        <div class="spacer"></div>
+        <div id="updateOpen" class="btn small">Download</div>
+        <div id="updateClose" class="link quiet">Dismiss</div>
+      </div>
+
+      <div class="row action">
+        <div class="seg big" id="mode">
+          <div class="opt on" data-value="sequence">Whole sequence</div>
+          <div class="opt" data-value="selection">Selected clips</div>
+        </div>
+        <div class="spacer"></div>
+        <div id="cancel" class="btn hidden">Cancel</div>
+        <div id="analyze" class="btn primary">Find smiles</div>
+      </div>
+
+      <div id="options">
+        <div class="row">
+          <div class="group">
+            <span class="lbl">Sample</span>
+            <div class="seg" id="sampleFps">
+              <div class="opt" data-value="2">2 fps</div>
+              <div class="opt" data-value="4">4 fps</div>
+              <div class="opt" data-value="8">8 fps</div>
+            </div>
+          </div>
+          <div class="group">
+            <span class="lbl">Show</span>
+            <div class="seg" id="maxResults">
+              <div class="opt" data-value="12">12</div>
+              <div class="opt" data-value="24">24</div>
+              <div class="opt" data-value="48">48</div>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="group">
+            <span class="lbl">Favour</span>
+            <div class="seg" id="priority">
+              <div class="opt" data-value="balanced">Balanced</div>
+              <div class="opt" data-value="sharpness">Sharpness</div>
+              <div class="opt" data-value="smile">Smile</div>
+            </div>
+          </div>
+          <div class="group">
+            <span class="lbl">Gap</span>
+            <div class="seg" id="minGap">
+              <div class="opt" data-value="1.5">1.5 s</div>
+              <div class="opt" data-value="3">3 s</div>
+              <div class="opt" data-value="6">6 s</div>
+              <div class="opt" data-value="15">15 s</div>
+            </div>
+          </div>
+        </div>
+        <div class="row toggles">
+          <div class="toggle" id="skipCovered"><div class="switch"><div class="knob"></div></div><span>Skip footage hidden by upper tracks</span></div>
+          <div class="toggle" id="useInOut"><div class="switch"><div class="knob"></div></div><span>Only between In/Out</span></div>
+        </div>
+      </div>
+
+      <div id="progressWrap" class="hidden">
+        <div class="bar"><div id="progress"></div></div>
+        <div id="status"></div>
+      </div>
+      <div id="warnings" class="hidden"></div>
+    </div>
+
+    <div id="toolbar" class="hidden">
+      <div class="row">
+        <span id="summary"></span>
+        <div class="spacer"></div>
+        <span id="note"></span>
+      </div>
+      <div class="row">
+        <div class="seg" id="sort">
+          <div class="opt on" data-value="score">Best first</div>
+          <div class="opt" data-value="time">Timeline</div>
+        </div>
+        <div class="seg" id="view">
+          <div class="opt on" data-value="frame">Frame</div>
+          <div class="opt" data-value="face">Face</div>
+        </div>
+        <div class="spacer"></div>
+        <div id="selectAll" class="link">Select all</div>
+        <div id="selectNone" class="link hidden">Clear</div>
+        <div id="markSelected" class="btn small">Markers</div>
+        <div id="exportSelected" class="btn small">Export</div>
+      </div>
+    </div>
+
+    <div id="results"></div>
+
+    <div id="bottom" class="row">
+      <span class="lbl">Save to</span>
+      <span id="exportFolder"></span>
+      <div id="chooseFolder" class="link">Change</div>
+      <div id="resetFolder" class="link hidden">Use project folder</div>
+      <div class="spacer"></div>
+      <div class="seg" id="exportFormat">
+        <div class="opt" data-value="png">PNG</div>
+        <div class="opt" data-value="jpg">JPEG</div>
+        <div class="opt" data-value="tif">TIFF</div>
+      </div>
+      <div id="version" class="link quiet" title="Check for updates"></div>
+    </div>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the .ccx and the engine zip and publish them
+# as a GitHub Release. Bump the version first with `npm run version:set -- 0.2.0`.
+# No signing step: independent (non-Marketplace) .ccx distribution doesn't need
+# the Adobe Developer Distribution portal.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false   # no dependencies, no lockfile to cache
+                                         # (Node 22.2+ for zlib.crc32 in build.js)
+
+      - name: Check tag matches manifest.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          file="$(node -p "require('./plugin/manifest.json').version")"
+          if [ "$tag" != "$file" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match plugin/manifest.json version ($file)"; exit 1
+          fi
+
+      - name: Check and build
+        run: |
+          npm run lint
+          python3 -m py_compile engine/analyzer.py engine/server.py
+          npm run build
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Creating a release in the GitHub UI also pushes the tag, which triggers
+        # this workflow, so the release may already exist (with hand-written
+        # notes). In that case just attach the files.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.ccx dist/*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.ccx dist/*.zip --generate-notes --title "SayCheese $GITHUB_REF_NAME"
+          fi

@@ -1,0 +1,14 @@
+# Engine environment and downloaded models (setup.bat recreates them)
+engine/.venv/
+engine/models/
+__pycache__/
+*.pyc
+
+# Build output
+dist/
+*.ccx
+
+# Local test output and tool config
+test-exports/
+node_modules/
+.claude/

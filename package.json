@@ -1,0 +1,12 @@
+{
+  "name": "saycheese",
+  "version": "0.1.0",
+  "description": "Premiere Pro panel that finds and ranks smiles in interview footage for thumbnail frame grabs.",
+  "private": true,
+  "scripts": {
+    "lint": "node scripts/check.js",
+    "build": "node scripts/build.js",
+    "version:set": "node scripts/set-version.js"
+  },
+  "license": "MIT"
+}
