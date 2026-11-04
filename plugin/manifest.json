@@ -2,7 +2,7 @@
   "manifestVersion": 6,
   "id": "com.saycheese.smilefinder",
   "name": "SayCheese",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "main": "index.html",
   "host": {
     "app": "premierepro",

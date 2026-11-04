@@ -1,6 +1,6 @@
 {
   "name": "saycheese",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Premiere Pro panel that finds and ranks smiles in interview footage for thumbnail frame grabs.",
   "private": true,
   "scripts": {

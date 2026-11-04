@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // fetch-deps.js -- puts the engine's third-party files into plugin/:
-//   plugin/win/x64/libmediapipe.dll        from Google's mediapipe wheel on PyPI (Apache-2.0)
+//   plugin/win/x64/libmediapipe.dll        from Google's mediapipe wheels on PyPI (Apache-2.0)
+//   plugin/mac/arm64/libmediapipe.dylib
 //   plugin/models/face_landmarker.task     MediaPipe's face landmarker model (Apache-2.0)
-// Both are checked against pinned SHA-256 hashes, cached in .deps-cache/, and
+// All are checked against pinned SHA-256 hashes, cached in .deps-cache/, and
 // kept out of git. The addon itself (plugin/win/x64/saycheese.uxpaddon) is
-// built from native/ and committed, as Syncitol does with its addon.
+// built from native/ and committed, as Syncitol does with its addon;
+// the macOS addon (plugin/mac/arm64/saycheese.uxpaddon) is built by CI.
 //
 // Zero npm dependencies: fetch, crypto and zlib from Node 22.
 "use strict";
@@ -22,6 +24,12 @@ const DEPS = [
     sha256: "71f44832fdd32b6270bc4379bcdd934287fb9eab974c3e74ef3fa76c7e79b54a",
     extract: "mediapipe/tasks/c/libmediapipe.dll",
     to: "plugin/win/x64/libmediapipe.dll",
+  },
+  {
+    url: "https://files.pythonhosted.org/packages/a3/5c/ce8750cfe2de42ab2433b2d6445f4a16225a63412d991b2970204b047d73/mediapipe-1.2.2-py3-none-macosx_11_0_arm64.whl",
+    sha256: "d3bb50923652182344ad31cfd2a09697e52952bd4bca2384ecabc90e21db9a5f",
+    extract: "mediapipe/tasks/c/libmediapipe.dylib",
+    to: "plugin/mac/arm64/libmediapipe.dylib",
   },
   {
     url: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
@@ -78,7 +86,9 @@ function unzipEntry(zip, name) {
     let data = await download(dep);
     if (dep.extract) data = unzipEntry(data, dep.extract);
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.writeFileSync(out, data);
+    // Write alongside and rename: overwriting a library Premiere has loaded can crash it on macOS.
+    fs.writeFileSync(`${out}.new`, data);
+    fs.renameSync(`${out}.new`, out);
     console.log(`fetch-deps: ${dep.to} (${(data.length / 1048576).toFixed(1)} MB)`);
   }
 })().catch((e) => {

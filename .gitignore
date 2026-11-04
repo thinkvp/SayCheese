@@ -16,10 +16,16 @@ node_modules/
 # Native addon build output (FFmpeg source and build, objects, CLI)
 native/build/
 
-# Fetched by scripts/fetch-deps.js (checksum-pinned); the addon itself is committed
+# Fetched by scripts/fetch-deps.js (checksum-pinned); the Windows addon itself is committed
 .deps-cache/
 plugin/win/x64/libmediapipe.dll
+plugin/mac/arm64/libmediapipe.dylib
+
+# The macOS addon is built by CI (or native/build-addon-mac.sh), not committed
+plugin/mac/arm64/saycheese.uxpaddon
 plugin/models/
 
 # Addon copies moved aside while Premiere had them loaded
 plugin/win/x64/*.old
+*.new
+.DS_Store

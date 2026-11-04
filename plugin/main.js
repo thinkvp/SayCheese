@@ -343,8 +343,21 @@ async function checkEngine() {
   await loadEngine();
   state.engineOk = Boolean(engine.addon);
   if (state.engineOk) setEngineStatus("ok", "Ready");
-  else setEngineStatus("off", "Engine didn't load", engine.error);
+  else if (isIntelMac()) {
+    setEngineStatus("off", "Needs an Apple Silicon Mac",
+      `The engine runs on Apple Silicon Macs only (if Premiere is set to open using Rosetta, turn that off). ${engine.error}`);
+  } else setEngineStatus("off", "Engine didn't load", engine.error);
   setDisabled("analyze", !state.engineOk || Boolean(state.polling));
+}
+
+/** The addon is arm64-only on macOS (MediaPipe has no Intel library). */
+function isIntelMac() {
+  try {
+    const os = require("os");
+    return os.platform() === "darwin" && !/arm/i.test(os.arch());
+  } catch (e) {
+    return false;
+  }
 }
 
 function setEngineStatus(cls, text, title = "") {

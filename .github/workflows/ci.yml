@@ -6,7 +6,50 @@ on:
   pull_request:
 
 jobs:
+  # The macOS addon is built here rather than committed. FFmpeg is cached, so
+  # this is a few minutes unless build-ffmpeg-mac.sh changes.
+  build-addon-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Cache FFmpeg build
+        id: cache-ffmpeg
+        uses: actions/cache@v6
+        with:
+          path: native/build/ffmpeg-out
+          key: ffmpeg-mac-arm64-${{ hashFiles('native/build-ffmpeg-mac.sh') }}
+
+      - name: Build FFmpeg (static, video only)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: bash native/build-ffmpeg-mac.sh
+
+      - name: Build macOS addon
+        run: |
+          npm run deps
+          bash native/build-addon-mac.sh
+
+      # Proves libmediapipe loads, init works, a JPEG decodes and a face is found.
+      - name: Smoke test
+        run: |
+          # The #1 card from the README screenshot: a 186 px face.
+          sips -s format jpeg -c 186 186 --cropOffset 276 14 "docs/screenshots/SayCheese UI.png" --out "$RUNNER_TEMP/face.jpg"
+          mkdir -p "$RUNNER_TEMP/thumbs"
+          native/build/out/saycheese-cli --thumbs "$RUNNER_TEMP/face.jpg" "$RUNNER_TEMP/thumbs" t | tee "$RUNNER_TEMP/thumbs.json"
+          grep -q '"face":"t_face.jpg"' "$RUNNER_TEMP/thumbs.json" || { echo "no face found"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-addon
+          path: plugin/mac/arm64/saycheese.uxpaddon
+          if-no-files-found: error
+
   verify:
+    needs: build-addon-mac
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -15,6 +58,11 @@ jobs:
           node-version: 22
           package-manager-cache: false   # no dependencies, no lockfile to cache
                                          # (Node 22.2+ for zlib.crc32 in build.js)
+      - uses: actions/download-artifact@v8
+        with:
+          name: mac-addon
+          path: plugin/mac/arm64
+
       - name: Check and build
         run: |
           npm run lint
