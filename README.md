@@ -2,43 +2,25 @@
 
 A Premiere Pro panel that sweeps a sequence (or the selected clips) for smiles and ranks them as thumbnail candidates. It favours frames with no motion blur, open eyes and a natural mouth shape.
 
-```
-plugin/   UXP panel (Premiere Pro 25.6+)
-engine/   Local analysis service (Python: MediaPipe Face Landmarker + OpenCV + ffmpeg)
-```
+![SayCheese in Premiere Pro: twelve ranked smiles from an interview, in the Face view](docs/screenshots/SayCheese%20UI.png)
 
-## Why two parts
-
-UXP panels can't run ML models or decode video frames themselves. The panel reads the timeline and sends the visible pieces of source media to a small engine running on `127.0.0.1:47820`. The engine decodes the original files with ffmpeg, which is far faster than rendering frames through Premiere. Thumbnails and the final frame export still come from Premiere, so exported frames include your grade, effects and reframing.
+```
+plugin/   UXP panel (Premiere Pro 26+), including the analysis addon
+native/   Source of the addon: FFmpeg decoding + MediaPipe face analysis in C++
+engine/   The original Python engine, kept as the reference the addon is checked against
+```
 
 ## Install
 
-From the [latest release](https://github.com/thinkvp/SayCheese/releases/latest):
+Needs Premiere Pro 26 or later on 64-bit Windows. The macOS build of the addon is still to come.
 
-1. **Panel**: download `SayCheese-x.y.z.ccx` and double-click it; Creative Cloud installs it. In Premiere, open it from *Window → UXP Plugins → SayCheese*.
-2. **Engine**: download `SayCheese-Engine-x.y.z.zip` and unzip it somewhere permanent. It needs Python 3.10+ ([python.org](https://www.python.org/downloads/)).
-3. In the panel, press **Start engine** and pick `start.bat` (`start.command` on macOS) in the unzipped folder. The panel remembers it. The first start creates a virtual environment, installs dependencies and downloads the face model (~3.7 MB) and eye model (46 KB), so it takes a few minutes. You can also run `start.bat` yourself.
+Download `SayCheese-x.y.z.ccx` from the [latest release](https://github.com/thinkvp/SayCheese/releases/latest) and double-click it; Creative Cloud installs it. In Premiere, open it from *Window → UXP Plugins → SayCheese*. That's all: the analysis engine is built into the panel, so there's nothing else to install or start.
 
-The panel checks GitHub for a newer release once a day and shows a banner when there is one. Click the version number in the footer to check now. Update the engine zip together with the panel; the engine status turns amber when their versions differ.
+The panel checks GitHub for a newer release once a day and shows a banner when there is one. Click the version number in the footer to check now. Installing a newer `.ccx` replaces the old one.
 
-`ffmpeg` is taken from PATH if it's there; otherwise the engine uses the copy bundled with `imageio-ffmpeg`.
+## How it works
 
-## Development
-
-1. Run `engine\setup.bat` once, then `engine\start.bat` (or `engine/start.command` on macOS).
-2. Load the panel in Adobe UXP Developer Tools: *Add Plugin* → `plugin/manifest.json` → *Load & Watch*. **Start engine** finds `engine/` next to `plugin/` in a checkout. Manifest changes need *Unload* and *Load*; other files reload on save.
-3. `npm run lint` checks the panel script and that the version numbers agree. `npm run build` writes the `.ccx` and engine zip to `dist/`. Both need Node 22.2+ and no npm install.
-
-### Releasing
-
-```bash
-npm run version:set -- 0.2.0
-git commit -am "Release 0.2.0"
-git tag v0.2.0
-git push --follow-tags
-```
-
-`version:set` updates `plugin/manifest.json`, `package.json` and the engine's `VERSION` together. Pushing the tag runs the Release workflow, which checks the tag matches the manifest, builds both files and publishes them as a GitHub Release with generated notes. If you create the release in the GitHub UI instead, the workflow attaches the files to it. The repository must stay public, because the panel's update check asks GitHub anonymously.
+UXP panels can't decode video or run ML models in JavaScript, so the panel carries a native addon (`plugin/win/x64/saycheese.uxpaddon`, built from `native/`). The addon decodes the original media with FFmpeg, built in statically, which is far faster than rendering frames through Premiere. It finds faces with Google's MediaPipe face landmarker, loaded from `libmediapipe.dll` next to it. The work runs on background threads, one face detector per worker, so Premiere stays responsive and the panel polls for progress. The first thumbnails come straight from the media, as shot; Premiere then exports each result's frame and the addon remakes the card and face thumbnails from it, so they show your grade, effects and reframing, like the exported stills.
 
 ## Using it
 
@@ -60,35 +42,72 @@ Options:
 | Favour | Weighting preset: *Balanced*, *Sharpness* (stricter on blur) or *Smile*. |
 | Gap | Minimum time between results, so you get different moments rather than ten frames of the same laugh. |
 
+An 11.5-minute 1080p interview clip on a network drive takes about a minute to scan. The cards appear as soon as the scan finishes, showing the footage as shot, then switch one by one to frames rendered by Premiere with your grade, effects and reframing. That takes about half a second per result, and the header reports it ("colour matched in 5 s").
+
+### Temporary files
+
+Thumbnails live in the panel's temporary folder, which UXP provides: `%TEMP%\Adobe\UXP\PluginsStorage\PPRO\26\…\com.saycheese.smilefinder\PluginData\saycheese\job-N`. Each scan takes well under 1 MB. Only the last five scans are kept, and the folder is emptied each time the panel starts in a new Premiere session. The full-size frames Premiere renders for colour matching are deleted as soon as their thumbnails are made.
+
 ## How frames are scored
 
-1. **Coarse scan**: each segment is decoded at the sample rate, downscaled to 960 px. MediaPipe's face blendshapes give a smile strength per sample. The face is tracked from sample to sample, and square tiles are tried when no face is found, so small, off-centre faces in wide interview shots are still detected.
+1. **Coarse scan**: each segment is decoded at the sample rate, downscaled to 960 px, split into chunks scanned in parallel. MediaPipe's face blendshapes give a smile strength per sample. The face is tracked from sample to sample, and square tiles are tried when no face is found, so small, off-centre faces in wide interview shots are still detected.
 2. **Moments**: smile peaks are picked with the minimum gap between them.
-3. **Refine**: every frame within ±0.75 s of each peak is decoded at native resolution, cropped to the face by ffmpeg. Each frame gets:
+3. **Refine**: every frame within ±0.75 s of each peak is decoded at native resolution, cropped to the face. Each frame gets:
    - **Sharpness**: variance of the Laplacian over the face, resampled to a fixed face height so close-ups and wides are comparable. It is normalised across the whole job.
    - **Stillness**: how far the face landmarks moved since the previous frame, relative to face size. Movement between frames is what produces motion blur.
    - **Smile**: MediaPipe's `mouthSmile` blendshape. There is deliberately no bonus for cheek or eye squint, which would favour the narrow-eyed peak of a laugh over the open-eyed smile just before it.
-   - **Eyes**: each eye is checked by an open/closed-eye classifier, Intel Open Model Zoo's `open-closed-eye-0001` (Apache-2.0, 46 KB, checksum-verified on download). MediaPipe's blink blendshape is used as a backup for clear blinks and winks. MediaPipe alone reads eyes squeezed shut by laughter as open. Eyes act as a multiplier, because a blink ruins a thumbnail however good the rest is.
+   - **Eyes**: each eye is checked by an open/closed-eye classifier, Intel Open Model Zoo's `open-closed-eye-0001` (Apache-2.0), compiled into the addon. MediaPipe's blink blendshape is used as a backup for clear blinks and winks. MediaPipe alone reads eyes squeezed shut by laughter as open. Eyes act as a multiplier, because a blink ruins a thumbnail however good the rest is.
    - **Mouth**: penalises mid-word shapes (open jaw without a smile, "oo" and "o" shapes).
    - **Frontal**: a mild penalty for strong head turns.
 4. The best frame of each moment is ranked by the combined score (0–100).
 
 Times are frame-accurate within the source file. The panel snaps them to the nearest sequence frame.
 
-## Testing the engine without Premiere
+## Development
+
+Needs Node 22.2+ (no npm install), and for the addon, Visual Studio 2022 Build Tools and MSYS2 with `make` and `nasm`.
+
+1. `npm run deps` fetches MediaPipe's library (from Google's `mediapipe` wheel on PyPI) and the face model into `plugin/`, checked against pinned SHA-256 hashes. They're gitignored.
+2. The addon `plugin/win/x64/saycheese.uxpaddon` is committed, so you only need to build it when changing `native/`:
+   - `native\build-ffmpeg-win.bat` builds the static FFmpeg (video decoders, swscale, and JPEG reading and writing; LGPL only) into `native/build/`. It downloads the FFmpeg 8.1.2 source first if needed; run once.
+   - `native\build-addon-win.bat` builds the addon and `saycheese-cli.exe`, and copies the addon into `plugin/win/x64`. If Premiere has the old addon loaded, that copy is renamed to `*.old` (ignored by git and the build) rather than overwritten.
+3. Load the panel in Adobe UXP Developer Tools: *Add Plugin* → `plugin/manifest.json` → *Load & Watch*. Manifest changes need *Unload* and *Load*; other files reload on save. A rebuilt addon only loads after Premiere restarts.
+4. `npm run lint` checks the panel script and that the versions agree. `npm run build` writes the `.ccx` to `dist/`.
+
+### Testing the engine without Premiere
 
 ```bash
-engine\.venv\Scripts\python engine\analyzer.py "D:\footage\interview.mp4" --start 60 --end 300 --results 12
+native\build\out\saycheese-cli.exe "D:\footage\interview.mp4" 60 300 12
 ```
 
-This prints the ranked frames and writes thumbnails to `%TEMP%\saycheese\cli`.
+The build copies `libmediapipe.dll` and the model next to it from `plugin/` (after `npm run deps`). It prints the job result JSON, with per-phase timings, and writes thumbnails to `native\build\out\cli-out`. Two more modes help when working on the addon:
+
+- `saycheese-cli --thumbs <frame.jpg> <outDir> <name>` runs the colour-matching step on a frame exported from Premiere.
+- `saycheese-cli --eye <file>` runs the eye classifier on raw 32×32 crops. That is how it was checked against OpenCV's run of the original ONNX model; `native/tools/export_eye_weights.py` regenerates the weights.
+
+The Python engine in `engine/` still runs on its own (`engine\setup.bat`, then `engine\.venv\Scripts\python engine\analyzer.py <video> --start 60 --end 300`) for comparing results.
+
+### Releasing
+
+```bash
+npm run version:set -- 0.2.0
+git commit -am "Release 0.2.0"
+git tag v0.2.0
+git push --follow-tags
+```
+
+`version:set` updates `plugin/manifest.json` and `package.json` together. Pushing the tag runs the Release workflow, which checks the tag matches the manifest, fetches the dependencies, builds the `.ccx` and publishes it as a GitHub Release with generated notes, which you can then edit. If you create the release in the GitHub UI instead, the workflow attaches the file to it. The repository must stay public, because the panel's update check asks GitHub anonymously.
 
 ## Known limits
 
+- Windows only until the macOS addon is built.
 - The eye classifier works on 32×32 crops, so it is less reliable on small faces in wide shots, where eyes are about 10 px tall. It may also read a strongly squinting smile as one eye closed. In practice that only nudges big squinty laughs below smiles with open eyes.
 - Multicam clips are skipped with a warning. Flatten them first.
-- Camera RAW formats ffmpeg can't decode (BRAW, R3D) are reported as errors. Use proxies or transcodes.
+- Camera RAW formats the built-in FFmpeg can't decode (BRAW, R3D) are reported as errors. Use proxies or transcodes. The decoders included are H.264, HEVC, ProRes, DNxHD, MPEG-2, MPEG-4 and MJPEG, in MP4/MOV, MXF, MKV, MPEG-TS and AVI.
 - Time remapping (variable speed) is approximated as constant speed. Reversed clips are skipped.
-- The manifest requests full file-system access so exports can go next to the project without a folder prompt, and `https` launch access to open the release page.
-- The manifest requests network access to `"all"` domains. Premiere's UXP rejected specific `http://127.0.0.1`/`localhost` entries ("Manifest entry not found"), with or without a port. The panel itself only ever talks to the local engine.
+- The manifest requests full file-system access so exports can go next to the project without a folder prompt, network access to `api.github.com` for the update check, and `https` launch access to open the release page.
 - Premiere opens a new floating panel at its minimum size (620×700) and ignores the preferred size. Dock it or drag it bigger for more columns.
+
+## Licences
+
+SayCheese is MIT-licensed. The addon statically links FFmpeg (LGPL-2.1; this repository holds the build script, so it can be relinked) and bundles MediaPipe's library and face landmarker model (Apache-2.0) and the weights of Intel's open-closed-eye-0001 model (Apache-2.0).

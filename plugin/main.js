@@ -2,14 +2,14 @@
  * SayCheese — Premiere Pro UXP panel.
  *
  * The panel works out which pieces of source media are on screen (whole
- * sequence or selected clips), hands them to the local analysis engine
- * (engine/server.py) and shows the ranked smiles it finds. Times go to the
+ * sequence or selected clips), hands them to the analysis engine -- a native
+ * addon (native/) that decodes with FFmpeg and finds faces with MediaPipe on
+ * its own threads -- and shows the ranked smiles it finds. Times go to the
  * engine as source-file seconds plus the mapping back to sequence time, so
  * results come back already placed on the timeline.
  */
 const ppro = require("premierepro");
 const uxp = require("uxp");
-const os = require("os");
 
 const fs = uxp.storage.localFileSystem;
 const nfs = require("fs");
@@ -40,6 +40,8 @@ const state = {
   perRow: 0,
   engineKey: "",
   footerKey: "",
+  gradeRun: 0,           // bumped to abandon an older thumbnail grading pass
+  foundNote: "",
   version: "",
 };
 
@@ -49,7 +51,6 @@ const state = {
 
 function loadSettings() {
   const defaults = {
-    port: 47820,
     sampleFps: "4",
     maxResults: "24",
     priority: "balanced",
@@ -58,7 +59,6 @@ function loadSettings() {
     useInOut: false,
     exportFormat: "png",
     exportFolders: {}, // project path -> folder picked for that project
-    engineLauncher: null, // start.bat / start.command picked when the plugin is installed from a .ccx
   };
   try {
     return Object.assign(defaults, JSON.parse(localStorage.getItem("saycheese") || "{}"));
@@ -71,10 +71,6 @@ function saveSettings() {
   try {
     localStorage.setItem("saycheese", JSON.stringify(settings));
   } catch (e) { /* non-fatal */ }
-}
-
-function engineUrl(path) {
-  return `http://127.0.0.1:${settings.port}${path}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,91 +314,46 @@ async function collect() {
 // Engine
 // ---------------------------------------------------------------------------
 
-async function api(path, body) {
-  const res = await fetch(engineUrl(path), body === undefined ? {} : {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `Engine error ${res.status}`);
-  return data;
+// Thumbnails go in job-N folders under this folder of the plugin's temp folder.
+const WORK_DIR = "saycheese";
+
+const engine = { addon: null, error: "", loading: null };
+
+/** Loads the addon and MediaPipe once; a failure is shown rather than thrown. */
+function loadEngine() {
+  if (!engine.loading) {
+    engine.loading = (async () => {
+      try {
+        const mod = require("saycheese.uxpaddon");
+        const addon = mod && typeof mod.then === "function" ? await mod : mod;
+        const plugin = (await fs.getPluginFolder()).nativePath;
+        const temp = (await fs.getTemporaryFolder()).nativePath;
+        addon.init(`${plugin}/models/face_landmarker.task`, `${temp}/${WORK_DIR}`);
+        engine.addon = addon;
+      } catch (e) {
+        // UXP's native loader often throws errors with an empty message.
+        engine.error = (e && e.message) || String(e) || "unknown error";
+      }
+    })();
+  }
+  return engine.loading;
 }
 
 async function checkEngine() {
-  let cls, text, title = "";
-  try {
-    const h = await api("/health");
-    state.engineOk = h.ok;
-    cls = h.ok ? (h.busy ? "busy" : "ok") : "busy";
-    text = h.ok ? (h.busy ? "Engine busy" : "Engine ready") : `Engine: ${h.model}`;
-    title = h.error || "";
-    // Releases bump the panel and engine together, so any difference means one is stale.
-    if (h.ok && state.version && h.version && h.version !== state.version) {
-      cls = "busy";
-      text = `Engine v${h.version}`;
-      title = `This panel is v${state.version}. Download the matching SayCheese-Engine from the release page.`;
-    }
-  } catch (e) {
-    state.engineOk = false;
-    cls = "off";
-    text = "Engine offline";
-  }
-  setEngineStatus(cls, text, title);
-  $("startEngine").classList.toggle("hidden", state.engineOk);
+  await loadEngine();
+  state.engineOk = Boolean(engine.addon);
+  if (state.engineOk) setEngineStatus("ok", "Ready");
+  else setEngineStatus("off", "Engine didn't load", engine.error);
   setDisabled("analyze", !state.engineOk || Boolean(state.polling));
 }
 
 function setEngineStatus(cls, text, title = "") {
-  // Called every few seconds, so only touch the DOM when something changed.
   const key = `${cls}|${text}|${title}`;
   if (key === state.engineKey) return;
   state.engineKey = key;
   $("engine").className = `status ${cls}`;
   $("engineText").textContent = text;
   $("engine").title = title;
-}
-
-/**
- * The engine's launcher: one picked earlier, else engine/ next to the plugin
- * folder (a development checkout). An installed .ccx lives in Creative Cloud's
- * own folder, so there the user points at start.bat once.
- */
-async function engineLauncher() {
-  const isMac = os.platform() === "darwin";
-  const name = isMac ? "start.command" : "start.bat";
-  const candidates = [];
-  if (settings.engineLauncher) candidates.push(settings.engineLauncher);
-  try {
-    const plugin = (await fs.getPluginFolder()).nativePath.replace(/[\\/]+$/, "");
-    const sep = isMac ? "/" : "\\";
-    candidates.push(`${plugin.replace(/[\\/][^\\/]+$/, "")}${sep}engine${sep}${name}`);
-  } catch (e) { /* no plugin folder path */ }
-  for (const c of candidates) {
-    try {
-      if ((await nfs.lstat(c)).isFile()) return c;
-    } catch (e) { /* not there */ }
-  }
-  const file = await fs.getFileForOpening({ types: [isMac ? "command" : "bat"] });
-  if (!file) return null;
-  settings.engineLauncher = file.nativePath;
-  saveSettings();
-  return file.nativePath;
-}
-
-async function startEngine() {
-  try {
-    const path = await engineLauncher();
-    if (!path) {
-      setStatus("Download SayCheese-Engine from the release page, unzip it, then press Start engine and pick its start.bat.");
-      return;
-    }
-    const err = await uxp.shell.openPath(path, "Starts the SayCheese analysis engine on this computer.");
-    if (err) throw new Error(err);
-    setStatus("Starting engine… the first start installs it, which takes a few minutes.");
-  } catch (e) {
-    setStatus(`Couldn't start the engine (${e.message || e}). Run its start.bat yourself.`);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -425,23 +376,20 @@ async function analyze() {
     return;
   }
 
-  const total = ctx.segments.reduce((n, s) => n + (s.srcOut - s.srcIn), 0);
-  setStatus(`Sending ${ctx.segments.length} segment(s), ${Math.round(total)}s of footage…`);
   try {
-    const { id } = await api("/jobs", {
-      segments: ctx.segments,
-      options: {
-        sample_fps: Number(settings.sampleFps),
-        max_results: Number(settings.maxResults),
-        min_gap: Number(settings.minGap),
-        priority: settings.priority,
-      },
-    });
+    await loadEngine();
+    const addon = engine.addon;
+    if (!addon) throw new Error(engine.error || "The analysis engine didn't load.");
+    const id = addon.createJob(Number(settings.sampleFps), Number(settings.maxResults), Number(settings.minGap), settings.priority);
+    for (const seg of ctx.segments) {
+      addon.addSegment(id, seg.id, seg.mediaPath, seg.srcIn, seg.srcOut, seg.seqStart, seg.speed, seg.clipName || "", seg.track || 0);
+    }
+    addon.runJob(id);
     state.job = { id, ...ctx, preWarnings: ctx.warnings };
   } catch (e) {
     showProgress(false);
     setStatus("");
-    renderEmpty("The engine rejected the job", e.message);
+    renderEmpty("Couldn't start the analysis", e.message || String(e));
     return;
   }
 
@@ -461,9 +409,9 @@ async function poll() {
   if (!job) return;
   let snap;
   try {
-    snap = await api(`/jobs/${job.id}`);
+    snap = JSON.parse(engine.addon.poll(job.id));
   } catch (e) {
-    return stopPolling(`Lost contact with the engine: ${e.message}`);
+    return stopPolling(`The analysis engine failed: ${e.message || e}`);
   }
   setEngineStatus("busy", "Analysing");
   showProgress(true, snap.progress);
@@ -473,10 +421,13 @@ async function poll() {
 
   if (snap.status === "done") {
     const n = snap.results.length;
+    job.dir = snap.dir;
     state.results = snap.results;
     state.summary = `${n} smile${n === 1 ? "" : "s"}`;
     stopPolling(n ? "" : "No smiles found in this footage.");
-    note(n ? `Found in ${Math.round(snap.elapsed)} s` : "");
+    state.foundNote = n ? `Found in ${Math.round(snap.elapsed)} s` : "";
+    note(state.foundNote);
+    if (n) gradeThumbnails();
   } else {
     stopPolling(snap.message);
   }
@@ -493,9 +444,76 @@ function stopPolling(message) {
   else renderEmpty("No results", message || "No smiles found.");
 }
 
-async function cancel() {
-  if (state.job) {
-    try { await api(`/jobs/${state.job.id}/cancel`, {}); } catch (e) { /* engine gone */ }
+function cancel() {
+  if (state.job && engine.addon) engine.addon.cancel(state.job.id);
+}
+
+// ---------------------------------------------------------------------------
+// Graded thumbnails. The addon decodes the original media, so its first
+// thumbnails show the footage as shot. Premiere then exports each result's
+// sequence frame and the addon cuts the card and face images from that, so
+// they show the grade, effects and reframing like the exported stills do.
+// ---------------------------------------------------------------------------
+
+function thumbUrl(jobId, file) {
+  return `plugin-temp:/${WORK_DIR}/job-${jobId}/${file}`;
+}
+
+async function gradeThumbnails() {
+  const job = state.job;
+  if (!job || !job.dir || !engine.addon || !state.results.length) return;
+  const run = ++state.gradeRun;
+  const dir = job.dir.includes("\\") ? job.dir.replace(/\//g, "\\") : job.dir;
+  const fw = (job.frameRect && job.frameRect.width) || 1920;
+  const fh = (job.frameRect && job.frameRect.height) || 1080;
+  const w = Math.min(1280, Math.round(fw));
+  const h = Math.round((w * fh) / fw);
+  const list = [...state.results].sort((a, b) => a.rank - b.rank);
+  const started = Date.now();
+  let failed = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (run !== state.gradeRun || state.job !== job) return;  // superseded
+    const r = list[i];
+    note(`Matching thumbnail colour to the timeline ${i + 1}/${list.length}…`);
+    const frame = `grade-${r.id}-${run}.jpg`;
+    try {
+      const ok = await ppro.Exporter.exportSequenceFrame(job.sequence, frameTick(r.seqTime, job.timebase), frame, dir, w, h);
+      if (!ok || !(await waitForFile(`${dir}/${frame}`))) throw new Error("export failed");
+      const made = JSON.parse(engine.addon.thumbsFromFrame(`${dir}/${frame}`, dir, `${r.id}-g${run}`));
+      r.thumb = made.thumb;
+      if (made.face) r.face = made.face;
+      updateCardImages(r);
+    } catch (e) {
+      failed++;
+    }
+    try { await nfs.unlink(`${dir}/${frame}`); } catch (e) { /* already gone */ }
+  }
+  const secs = Math.round((Date.now() - started) / 1000);
+  note(failed === list.length ? `${state.foundNote} · couldn't match thumbnail colour to the timeline`
+    : `${state.foundNote} · colour matched in ${secs} s`);
+}
+
+/** Premiere's frame export resolves before the file is written; wait until it
+ *  exists and its size has settled. */
+async function waitForFile(path, timeoutMs = 5000) {
+  let last = -1;
+  for (const end = Date.now() + timeoutMs; Date.now() < end;) {
+    try {
+      const size = (await nfs.lstat(path)).size;
+      if (size > 0 && size === last) return true;
+      last = size;
+    } catch (e) { /* not there yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+/** Points both views' cards of a result at its current images. */
+function updateCardImages(r) {
+  for (const view of ["frame", "face"]) {
+    const card = cards.get(`${view}:${r.id}`);
+    const img = card && card.querySelector("img");
+    if (img) img.src = thumbUrl(state.job.id, view === "face" && r.face ? r.face : r.thumb);
   }
 }
 
@@ -711,7 +729,7 @@ function buildCard(r) {
   const file = face && r.face ? r.face : r.thumb;
   if (file) {
     const img = document.createElement("img");
-    img.src = engineUrl(`/jobs/${jobId}/files/${file}`);
+    img.src = thumbUrl(jobId, file);
     thumb.appendChild(img);
   }
   thumb.appendChild(el("div", "badge rank", `#${r.rank}`));
@@ -1029,7 +1047,6 @@ function init() {
 
   onClick("analyze", analyze);
   onClick("cancel", cancel);
-  onClick("startEngine", startEngine);
   onClick("chooseFolder", chooseFolder);
   onClick("resetFolder", resetFolder);
   onClick("selectAll", () => {

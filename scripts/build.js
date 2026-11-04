@@ -1,14 +1,11 @@
 #!/usr/bin/env node
-// build.js -- package a release into dist/:
-//   SayCheese-<version>.ccx         the panel; Creative Cloud installs it on double-click
-//   SayCheese-Engine-<version>.zip  the analysis engine (Python sources + launchers)
+// build.js -- package a release as dist/SayCheese-<version>.ccx, which
+// Creative Cloud installs on double-click. It carries everything: the panel,
+// the analysis addon (win/x64/saycheese.uxpaddon), MediaPipe's library and the
+// face model, so there is nothing else to install.
 //
-// The engine zip holds no virtualenv or models: start.bat / start.command run
-// the one-time setup on first launch, which installs dependencies and
-// downloads the checksum-verified models.
-//
-// Zero npm dependencies, and the zip writer is plain Node so the same build
-// runs on Windows and macOS and keeps start.command executable.
+// Run `npm run deps` first to fetch the MediaPipe library and the model.
+// Zero npm dependencies; the zip writer is plain Node so it runs anywhere.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -18,14 +15,15 @@ const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
 const version = JSON.parse(fs.readFileSync(path.join(ROOT, "plugin", "manifest.json"), "utf8")).version;
 
-const PLUGIN_FILES = ["manifest.json", "index.html", "main.js", "styles.css", "icons"];
-const ENGINE_FILES = ["analyzer.py", "server.py", "requirements.txt", "setup.bat", "start.bat", "start.command"];
-const EXECUTABLE = new Set(["start.command"]);
+const PLUGIN_FILES = ["manifest.json", "index.html", "main.js", "styles.css", "icons", "win", "models"];
+const REQUIRED = ["win/x64/saycheese.uxpaddon", "win/x64/libmediapipe.dll", "models/face_landmarker.task"];
+const EXECUTABLE = new Set();
 
 /** Files under `dir` for each name (folders expanded), as [zip path, absolute path]. */
 function collect(dir, names, prefix = "") {
   const out = [];
   for (const name of names) {
+    if (name.endsWith(".old")) continue;  // addon copies moved aside by native/build-addon-win.bat
     const abs = path.join(dir, name);
     if (fs.statSync(abs).isDirectory()) {
       out.push(...collect(abs, fs.readdirSync(abs).sort(), `${prefix}${name}/`));
@@ -97,17 +95,14 @@ function writeZip(out, entries) {
   fs.writeFileSync(out, Buffer.concat([...locals, ...central, end]));
 }
 
+const missing = REQUIRED.filter((f) => !fs.existsSync(path.join(ROOT, "plugin", f)));
+if (missing.length) {
+  console.error(`build: missing plugin/${missing.join(", plugin/")}. Run npm run deps (and build the addon from native/).`);
+  process.exit(1);
+}
 fs.mkdirSync(DIST, { recursive: true });
 
 // The .ccx has manifest.json at the archive root.
 const ccx = path.join(DIST, `SayCheese-${version}.ccx`);
 writeZip(ccx, collect(path.join(ROOT, "plugin"), PLUGIN_FILES));
-
-// The engine unzips into its own folder.
-const engineZip = path.join(DIST, `SayCheese-Engine-${version}.zip`);
-writeZip(engineZip, collect(path.join(ROOT, "engine"), ENGINE_FILES, "SayCheese-Engine/"));
-
-for (const f of [ccx, engineZip]) {
-  const kb = (fs.statSync(f).size / 1024).toFixed(0);
-  console.log(`build: ${path.relative(ROOT, f)} (${kb} KB)`);
-}
+console.log(`build: ${path.relative(ROOT, ccx)} (${(fs.statSync(ccx).size / 1048576).toFixed(1)} MB)`);

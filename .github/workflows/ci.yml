@@ -19,4 +19,5 @@ jobs:
         run: |
           npm run lint
           python3 -m py_compile engine/analyzer.py engine/server.py
+          npm run deps
           npm run build

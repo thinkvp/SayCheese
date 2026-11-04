@@ -2,8 +2,7 @@
 /**
  * set-version.js -- single-source version bumper.
  * Usage: npm run version:set -- 0.2.0
- * Updates the plugin manifest, package.json and the engine's VERSION so they
- * can never drift (the panel compares its version with the engine's).
+ * Updates the plugin manifest and package.json so they can never drift.
  */
 "use strict";
 const fs = require("fs");
@@ -30,5 +29,4 @@ function edit(rel, fn) {
 
 edit("plugin/manifest.json", (s) => s.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
 edit("package.json", (s) => s.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
-edit("engine/server.py", (s) => s.replace(/^VERSION = "[^"]+"/m, `VERSION = "${version}"`));
 console.log("set-version: done.");

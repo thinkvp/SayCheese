@@ -2,3 +2,6 @@
 *.bat text eol=crlf
 *.png binary
 *.ccx binary
+*.uxpaddon binary
+*.dll binary
+*.task binary

@@ -12,3 +12,14 @@ dist/
 test-exports/
 node_modules/
 .claude/
+
+# Native addon build output (FFmpeg source and build, objects, CLI)
+native/build/
+
+# Fetched by scripts/fetch-deps.js (checksum-pinned); the addon itself is committed
+.deps-cache/
+plugin/win/x64/libmediapipe.dll
+plugin/models/
+
+# Addon copies moved aside while Premiere had them loaded
+plugin/win/x64/*.old

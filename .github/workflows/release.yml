@@ -1,7 +1,9 @@
 name: Release
 
-# Push a tag like v0.2.0 to build the .ccx and the engine zip and publish them
-# as a GitHub Release. Bump the version first with `npm run version:set -- 0.2.0`.
+# Push a tag like v0.2.0 to build the .ccx and publish it as a GitHub Release.
+# Bump the version first with `npm run version:set -- 0.2.0`. The .ccx bundles
+# the committed Windows addon plus MediaPipe and the face model, which
+# `npm run deps` fetches and checks against pinned hashes.
 # No signing step: independent (non-Marketplace) .ccx distribution doesn't need
 # the Adobe Developer Distribution portal.
 on:
@@ -34,6 +36,7 @@ jobs:
         run: |
           npm run lint
           python3 -m py_compile engine/analyzer.py engine/server.py
+          npm run deps
           npm run build
 
       - name: Publish GitHub Release
@@ -44,7 +47,7 @@ jobs:
         # notes). In that case just attach the files.
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.ccx dist/*.zip --clobber
+            gh release upload "$GITHUB_REF_NAME" dist/*.ccx --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.ccx dist/*.zip --generate-notes --title "SayCheese $GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" dist/*.ccx --generate-notes --title "SayCheese $GITHUB_REF_NAME"
           fi

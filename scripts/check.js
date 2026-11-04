@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * check.js -- quick checks run by CI and before a release: the panel script
- * parses, the manifest is valid JSON, and the three version numbers agree.
+ * parses, the manifest is valid JSON, and its version matches package.json.
  */
 "use strict";
 const fs = require("fs");
@@ -15,7 +15,7 @@ const fail = (msg) => {
   failed = true;
 };
 
-for (const f of ["plugin/main.js", "scripts/build.js", "scripts/set-version.js"]) {
+for (const f of ["plugin/main.js", "scripts/build.js", "scripts/set-version.js", "scripts/fetch-deps.js"]) {
   try {
     execFileSync(process.execPath, ["--check", path.join(ROOT, f)], { stdio: "pipe" });
   } catch (e) {
@@ -30,10 +30,8 @@ try {
   fail(`plugin/manifest.json: ${e.message}`);
 }
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-const engine = (/^VERSION = "([^"]+)"/m.exec(fs.readFileSync(path.join(ROOT, "engine/server.py"), "utf8")) || [])[1];
-if (!(manifest.version === pkg.version && pkg.version === engine)) {
-  fail(`versions disagree: manifest ${manifest.version}, package.json ${pkg.version}, engine ${engine}. ` +
-    "Use npm run version:set -- x.y.z");
+if (manifest.version !== pkg.version) {
+  fail(`versions disagree: manifest ${manifest.version}, package.json ${pkg.version}. Use npm run version:set -- x.y.z`);
 }
 
 if (failed) process.exit(1);
